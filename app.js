@@ -413,7 +413,8 @@ const Rebutan = (() => {
 let game = null;
 let currentScreen = 'landing';
 let gameStartTime = 0;
-let isReplayMode = false;  // V2: Replay for fun, no new THR
+let isReplayMode = false;
+let playerName = '';
 
 // ==================== SCREEN MANAGEMENT ====================
 function showScreen(screenId) {
@@ -484,7 +485,7 @@ const API = {
             const res = await fetch(`${CONFIG.API_URL}/api/record`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ fingerprint: fp, won, score, duration }),
+                body: JSON.stringify({ fingerprint: fp, won, score, duration, name: playerName }),
             });
             return await res.json();
         } catch (e) {
@@ -526,11 +527,59 @@ function displayDanaLink(won) {
     }
 }
 
-// ==================== START GAME ====================
+// ==================== LEADERBOARD ====================
+async function fetchLeaderboard() {
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/leaderboard`);
+        const data = await res.json();
+        renderLeaderboard(data.leaderboard || []);
+    } catch {
+        // Silently fail
+    }
+}
+
+function renderLeaderboard(board) {
+    const list = document.getElementById('leaderboard-list');
+    if (!list) return;
+    
+    if (board.length === 0) {
+        list.innerHTML = '<p class="leaderboard-empty">Belum ada pemain</p>';
+        return;
+    }
+    
+    const medals = ['🥇', '🥈', '🥉'];
+    list.innerHTML = board.map((p, i) => {
+        const rank = medals[i] || `${i + 1}`;
+        const prizeClass = p.won ? 'win' : 'lose';
+        const prizeText = p.won ? '10k' : '5k';
+        return `<div class="lb-item">
+            <span class="lb-rank">${rank}</span>
+            <span class="lb-name">${escapeHtml(p.name)}</span>
+            <span class="lb-score">${p.score} ⭐</span>
+            <span class="lb-prize ${prizeClass}">${prizeText}</span>
+        </div>`;
+    }).join('');
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
 function startGame() {
     if (_dt._o) {
         alert('⚠️ Tutup Developer Tools dulu ya biar fair! 😊');
         return;
+    }
+
+    // Ask for name if not set yet
+    if (!playerName && !Security.hasPlayed()) {
+        const name = prompt('✏️ Masukkan nama kamu dulu ya:');
+        if (!name || name.trim().length < 2) {
+            alert('Nama minimal 2 karakter ya! 😊');
+            return;
+        }
+        playerName = name.trim().substring(0, 20); // Max 20 chars
     }
 
     if (!Rebutan.isAvailable()) {
@@ -823,6 +872,8 @@ function resetGame() {
 document.addEventListener('DOMContentLoaded', () => {
     createDecorations();
     Rebutan.startCountdown();
+    fetchLeaderboard();
+    setInterval(fetchLeaderboard, 10000); // Update leaderboard every 10s
 
     Security.checkIDB((result) => {
         if (result && result.p) {

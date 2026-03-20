@@ -210,6 +210,7 @@ def record_play():
     score = data.get('score', 0)
     won = data.get('won', False)
     game_duration = data.get('duration', 0)
+    name = data.get('name', 'Anonim')[:20]  # Max 20 chars
     
     if not fingerprint or len(fingerprint) < 4:
         return jsonify({'error': 'Invalid fingerprint'}), 400
@@ -257,6 +258,7 @@ def record_play():
     ip = request.headers.get('X-Forwarded-For', request.remote_addr)
     play_record = {
         'fingerprint': fingerprint,
+        'name': name,
         'ip': ip,
         'score': score,
         'won': won,
@@ -284,6 +286,24 @@ def record_play():
         'claim_code': claim_code,
         'message': 'Selamat! THR kamu sudah dicatat.' if won else 'THR kamu sudah dicatat!',
     })
+
+@app.route('/api/leaderboard', methods=['GET'])
+def leaderboard():
+    """Public leaderboard — top scores."""
+    store = load_data()
+    plays = store.get('plays', [])
+    # Sort by score descending, take top 12
+    sorted_plays = sorted(plays, key=lambda p: p.get('score', 0), reverse=True)
+    board = []
+    for i, p in enumerate(sorted_plays[:12], 1):
+        board.append({
+            'rank': i,
+            'name': p.get('name', 'Anonim'),
+            'score': p.get('score', 0),
+            'won': p.get('won', False),
+            'round': p.get('round', 0) + 1,
+        })
+    return jsonify({'leaderboard': board, 'total': len(plays)})
 
 # ==================== ADMIN API ====================
 
@@ -334,10 +354,10 @@ def notify_admin_play(play):
     store = load_data()
     msg = (
         f"{icon} <b>THR Dimainkan!</b>\n\n"
+        f"Nama: {play.get('name', 'Anonim')}\n"
         f"Skor: {play['score']} poin\n"
         f"Hadiah: {prize}\n"
         f"Ronde: {play['round'] + 1}\n"
-        f"IP: {play['ip']}\n"
         f"Total pemain: {len(store['plays'])}/{THR_CONFIG['MAX_TOTAL_PLAYERS']}\n"
         f"Sisa budget: Rp {THR_CONFIG['TOTAL_BUDGET'] - store['total_spent']:,}".replace(',', '.')
     )

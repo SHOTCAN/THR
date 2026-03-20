@@ -992,3 +992,88 @@ html, body {
     .dana-qr { width: 150px; height: 150px; }
     .btn-dana { font-size: 0.9rem; padding: 0.7rem 1.5rem; }
 }
+
+/* ==================== LEADERBOARD ==================== */
+.leaderboard-section {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 16px;
+    border: 1px solid rgba(255, 215, 0, 0.15);
+    width: 100%;
+}
+
+.leaderboard-title {
+    font-family: var(--font-display);
+    font-size: 1.1rem;
+    color: var(--gold-main);
+    margin-bottom: 0.8rem;
+    text-align: center;
+}
+
+.leaderboard-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.leaderboard-empty {
+    text-align: center;
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 0.85rem;
+    padding: 1rem 0;
+}
+
+.lb-item {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.5rem 0.8rem;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 10px;
+    font-size: 0.85rem;
+    transition: background 0.2s;
+}
+
+.lb-item:nth-child(1) { background: rgba(255, 215, 0, 0.12); }
+.lb-item:nth-child(2) { background: rgba(192, 192, 192, 0.08); }
+.lb-item:nth-child(3) { background: rgba(205, 127, 50, 0.08); }
+
+.lb-rank {
+    font-weight: 800;
+    font-size: 1.1rem;
+    min-width: 28px;
+    text-align: center;
+}
+
+.lb-name {
+    flex: 1;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.lb-score {
+    font-weight: 700;
+    color: var(--gold-main);
+    font-size: 0.9rem;
+}
+
+.lb-prize {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 20px;
+    font-weight: 600;
+}
+
+.lb-prize.win {
+    background: rgba(46, 204, 113, 0.2);
+    color: #2ecc71;
+}
+
+.lb-prize.lose {
+    background: rgba(241, 196, 15, 0.2);
+    color: #f1c40f;
+}
