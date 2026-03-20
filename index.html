@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>🧧 THR Lebaran - Selamat Hari Raya Idul Fitri</title>
+    <meta name="description" content="Bagi-bagi THR Lebaran dengan cara seru! Main game Tangkap Ketupat dan dapatkan THR-mu!">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800;900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Decorative elements -->
+    <div class="decoration-container" id="decorations"></div>
+
+    <!-- ============ LANDING SCREEN ============ -->
+    <section id="landing-screen" class="screen active">
+        <div class="landing-content">
+            <div class="mosque-silhouette"></div>
+            <div class="crescent-moon">🌙</div>
+            <h1 class="title-main">Selamat Hari Raya</h1>
+            <h2 class="title-sub">Idul Fitri</h2>
+            <p class="title-year">1447 H</p>
+            <div class="divider">
+                <span class="divider-star">✦</span>
+            </div>
+            <p class="subtitle">Mohon Maaf Lahir dan Batin</p>
+            <p class="desc">Aku mau bagi-bagi <strong>THR</strong> nih! 🎉<br>Tapi kamu harus main game dulu ya~</p>
+
+            <!-- Prize status alert (shown when 10k is gone) -->
+            <div class="prize-alert" id="prize-alert" style="display:none;">
+                <span class="prize-alert-icon">⚠️</span>
+                <span>THR <strong>Rp 10.000</strong> sudah habis! Sisa THR <strong>Rp 5.000</strong></span>
+            </div>
+            
+            <div class="thr-info-card">
+                <div class="thr-info-row">
+                    <span class="thr-icon">🎮</span>
+                    <span>Main game <strong>"Tangkap Ketupat"</strong></span>
+                </div>
+                <div class="thr-info-row">
+                    <span class="thr-icon">🏆</span>
+                    <span>Menang → THR <strong>Rp 10.000</strong></span>
+                </div>
+                <div class="thr-info-row">
+                    <span class="thr-icon">🎁</span>
+                    <span>Kalah → Tetep dapet THR <strong>Rp 5.000</strong></span>
+                </div>
+                <div class="thr-info-row">
+                    <span class="thr-icon">⏰</span>
+                    <span>THR dibuka setiap <strong>15 menit</strong> — rebutan!</span>
+                </div>
+            </div>
+
+            <!-- Countdown Timer -->
+            <div class="countdown-card" id="countdown-card">
+                <p class="countdown-label" id="countdown-label">⏳ THR Berikutnya Dibuka Dalam:</p>
+                <div class="countdown-timer" id="countdown-timer">
+                    <div class="countdown-unit">
+                        <span class="countdown-digit" id="cd-minutes">00</span>
+                        <span class="countdown-unit-label">Menit</span>
+                    </div>
+                    <span class="countdown-separator">:</span>
+                    <div class="countdown-unit">
+                        <span class="countdown-digit" id="cd-seconds">00</span>
+                        <span class="countdown-unit-label">Detik</span>
+                    </div>
+                </div>
+                <div class="thr-slots" id="thr-slots">
+                    <span class="slots-icon">🧧</span>
+                    <span>Kuota ronde ini: <strong id="slots-remaining">3</strong> orang</span>
+                </div>
+                <div class="thr-slots">
+                    <span class="slots-icon">🎯</span>
+                    <span>Sisa kuota total: <strong id="quota-remaining">12</strong> orang</span>
+                </div>
+            </div>
+
+            <button id="btn-start" class="btn-primary" onclick="startGame()" disabled>
+                <span class="btn-text">⏳ Tunggu THR Dibuka...</span>
+                <span class="btn-glow"></span>
+            </button>
+        </div>
+    </section>
+
+    <!-- ============ GAME SCREEN ============ -->
+    <section id="game-screen" class="screen">
+        <div class="game-hud">
+            <div class="hud-item">
+                <span class="hud-label">⏱️ Waktu</span>
+                <span class="hud-value" id="timer">15</span>
+            </div>
+            <div class="hud-item">
+                <span class="hud-label">⭐ Skor</span>
+                <span class="hud-value" id="score">0</span>
+            </div>
+            <div class="hud-item">
+                <span class="hud-label">🎯 Target</span>
+                <span class="hud-value" id="target">20</span>
+            </div>
+        </div>
+        <canvas id="game-canvas"></canvas>
+        <div class="game-instruction" id="game-instruction">
+            <p>👆 Tap/Klik <strong>ketupat</strong> untuk menangkap!</p>
+            <p>⚠️ Hindari <strong>petasan</strong>!</p>
+        </div>
+    </section>
+
+    <!-- ============ RESULT SCREEN ============ -->
+    <section id="result-screen" class="screen">
+        <div class="result-content">
+            <div id="confetti-container"></div>
+            
+            <div class="result-icon" id="result-icon">🧧</div>
+            <h2 class="result-title" id="result-title">Selamat!</h2>
+            <p class="result-subtitle" id="result-subtitle">Kamu berhasil menangkap ketupat!</p>
+            
+            <div class="thr-envelope" id="thr-envelope">
+                <div class="envelope-front">
+                    <div class="envelope-pattern"></div>
+                    <p class="envelope-label">THR Lebaran</p>
+                    <p class="envelope-tap">Tap untuk buka 🧧</p>
+                </div>
+            </div>
+
+            <div class="thr-reveal" id="thr-reveal" style="display:none;">
+                <p class="thr-label">THR Kamu:</p>
+                <h1 class="thr-amount" id="thr-amount">Rp 10.000</h1>
+                <p class="thr-message">Selamat Hari Raya Idul Fitri!<br>Mohon maaf lahir dan batin 🙏</p>
+                
+                <div class="claim-info">
+                    <p class="claim-title">📱 Cara Klaim THR:</p>
+                    <p class="claim-desc">Screenshot halaman ini dan kirim ke pemberi THR.<br>THR akan dikirim via <strong>Kode Tunai DANA</strong> 💚</p>
+                    <div class="claim-code" id="claim-code"></div>
+                </div>
+            </div>
+
+            <button id="btn-replay" class="btn-secondary" onclick="resetGame()" style="display:none;">
+                🔄 Main Lagi
+            </button>
+        </div>
+    </section>
+
+    <script src="game.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
