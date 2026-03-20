@@ -130,9 +130,24 @@
                 <p class="thr-message">Selamat Hari Raya Idul Fitri!<br>Mohon maaf lahir dan batin 🙏</p>
                 
                 <div class="claim-info">
-                    <p class="claim-title">📱 Cara Klaim THR:</p>
-                    <p class="claim-desc">Screenshot halaman ini dan kirim ke pemberi THR.<br>THR akan dikirim via <strong>Kode Tunai DANA</strong> 💚</p>
-                    <div class="claim-code" id="claim-code"></div>
+                    <p class="claim-title">📱 Ambil THR Kamu:</p>
+                    
+                    <!-- DANA Kaget QR Code -->
+                    <div id="dana-qr-section" style="display:none;">
+                        <div class="dana-qr-container">
+                            <img id="dana-qr-img" class="dana-qr" alt="QR Code DANA Kaget" />
+                        </div>
+                        <p class="claim-desc" style="margin-top:0.8rem;">Scan QR di atas atau tap tombol:</p>
+                        <a id="dana-link-btn" href="#" target="_blank" class="btn-dana">
+                            💚 Buka DANA Kaget
+                        </a>
+                    </div>
+                    
+                    <!-- Fallback: claim code (if no DANA link) -->
+                    <div id="claim-code-section">
+                        <p class="claim-desc">Screenshot halaman ini dan kirim ke pemberi THR.<br>THR akan dikirim via <strong>DANA</strong> 💚</p>
+                        <div class="claim-code" id="claim-code"></div>
+                    </div>
                 </div>
             </div>
 

@@ -41,6 +41,7 @@ CORS(app, origins=ALLOWED_ORIGINS)
 
 # ==================== DATA STORE ====================
 DATA_FILE = 'data/thr_plays.json'
+LINKS_FILE = 'data/thr_dana_links.json'
 
 def load_data():
     try:
@@ -55,6 +56,21 @@ def save_data(data):
     os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
     with open(DATA_FILE, 'w') as f:
         json.dump(data, f, indent=2, default=str)
+
+def load_links():
+    """Load DANA Kaget links pool."""
+    try:
+        if os.path.exists(LINKS_FILE):
+            with open(LINKS_FILE, 'r') as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {'win_links': [], 'lose_links': []}
+
+def save_links(links):
+    os.makedirs(os.path.dirname(LINKS_FILE), exist_ok=True)
+    with open(LINKS_FILE, 'w') as f:
+        json.dump(links, f, indent=2, default=str)
 
 # ==================== SECURITY ====================
 # Rate limiter: max 10 requests per minute per IP
@@ -83,9 +99,9 @@ def rate_limit(max_per_minute=10):
     return decorator
 
 def generate_claim_code(fingerprint, won, score):
-    """Generate HMAC-verified claim code."""
+    """Generate HMAC-verified claim code (backup if no DANA link available)."""
     prefix = 'W' if won else 'T'
-    ts = hex(int(time.time()))[2:][-6:].upper()
+    ts = hex(int(time.time()))[-6:].upper()
     payload = f"{prefix}:{fingerprint}:{score}:{ts}"
     signature = hmac.new(
         THR_CONFIG['SECRET_KEY'].encode(),
@@ -93,6 +109,18 @@ def generate_claim_code(fingerprint, won, score):
         hashlib.sha256
     ).hexdigest()[:8].upper()
     return f"{prefix}-{ts}-{signature}"
+
+def get_dana_link(won):
+    """Get next available DANA Kaget link from pool."""
+    links = load_links()
+    pool = 'win_links' if won else 'lose_links'
+    for link in links.get(pool, []):
+        if not link.get('used', False):
+            link['used'] = True
+            link['used_at'] = datetime.utcnow().isoformat()
+            save_links(links)
+            return link.get('url', '')
+    return None  # No links available
 
 def verify_claim_code(code):
     """Verify a claim code is genuine (from our server)."""
@@ -225,8 +253,11 @@ def record_play():
     # Determine prize
     prize = THR_CONFIG['PRIZE_WIN'] if won else THR_CONFIG['PRIZE_LOSE']
     
-    # Generate secure claim code
+    # Generate secure claim code (backup)
     claim_code = generate_claim_code(fingerprint, won, score)
+    
+    # Get DANA Kaget link from pool
+    dana_link = get_dana_link(won)
     
     # Record play
     ip = request.headers.get('X-Forwarded-For', request.remote_addr)
@@ -237,11 +268,12 @@ def record_play():
         'won': won,
         'prize': prize,
         'claim_code': claim_code,
+        'dana_link': dana_link,
         'round': get_current_round(),
         'duration': game_duration,
         'timestamp': datetime.utcnow().isoformat(),
         'user_agent': request.headers.get('User-Agent', '')[:100],
-        'claimed': False,
+        'claimed': bool(dana_link),
     }
     
     store['plays'].append(play_record)
@@ -256,6 +288,7 @@ def record_play():
         'won': won,
         'prize': prize,
         'claim_code': claim_code,
+        'dana_link': dana_link,
         'message': 'Selamat! THR kamu sudah dicatat.' if won else 'THR kamu sudah dicatat!',
     })
 
@@ -309,6 +342,63 @@ def admin_claim():
             return jsonify({'success': True, 'play': play})
     
     return jsonify({'error': 'Code not found'}), 404
+
+@app.route('/api/admin/add-links', methods=['POST'])
+def admin_add_links():
+    """Admin: add DANA Kaget links to the pool."""
+    key = request.args.get('key', '')
+    if key != THR_CONFIG['ADMIN_KEY']:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    data = request.get_json()
+    link_type = data.get('type', 'lose')  # 'win' or 'lose'
+    urls = data.get('urls', [])  # list of DANA Kaget URLs
+    
+    if not urls:
+        return jsonify({'error': 'No URLs provided'}), 400
+    
+    links = load_links()
+    pool = 'win_links' if link_type == 'win' else 'lose_links'
+    
+    added = 0
+    for url in urls:
+        url = url.strip()
+        if url and 'dana.id' in url:
+            # Check not duplicate
+            existing = [l['url'] for l in links.get(pool, [])]
+            if url not in existing:
+                links[pool].append({
+                    'url': url,
+                    'used': False,
+                    'added_at': datetime.utcnow().isoformat(),
+                })
+                added += 1
+    
+    save_links(links)
+    
+    return jsonify({
+        'success': True,
+        'added': added,
+        'total_win_links': len(links.get('win_links', [])),
+        'total_lose_links': len(links.get('lose_links', [])),
+        'available_win': len([l for l in links.get('win_links', []) if not l.get('used')]),
+        'available_lose': len([l for l in links.get('lose_links', []) if not l.get('used')]),
+    })
+
+@app.route('/api/admin/links', methods=['GET'])
+def admin_links():
+    """Admin: see all DANA Kaget links and their status."""
+    key = request.args.get('key', '')
+    if key != THR_CONFIG['ADMIN_KEY']:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    links = load_links()
+    return jsonify({
+        'win_links': links.get('win_links', []),
+        'lose_links': links.get('lose_links', []),
+        'available_win': len([l for l in links.get('win_links', []) if not l.get('used')]),
+        'available_lose': len([l for l in links.get('lose_links', []) if not l.get('used')]),
+    })
 
 @app.route('/api/admin/reset', methods=['POST'])
 def admin_reset():

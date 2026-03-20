@@ -79,9 +79,9 @@ const Security = (() => {
         } catch { return false; }
     }
 
-    function recordPlay(won, score, code) {
+    function recordPlay(won, score, code, danaLink) {
         const fp = getFingerprint();
-        const data = { p: true, w: won, s: score, c: code, f: fp, t: Date.now() };
+        const data = { p: true, w: won, s: score, c: code, dana_link: danaLink || null, f: fp, t: Date.now() };
         try {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
             sessionStorage.setItem(STORAGE_KEY, '1');
@@ -464,6 +464,31 @@ const API = {
     },
 };
 
+// ==================== DANA KAGET DISPLAY ====================
+function displayDanaLink(danaLink) {
+    const qrSection = document.getElementById('dana-qr-section');
+    const codeSection = document.getElementById('claim-code-section');
+    
+    if (danaLink) {
+        // Show QR + link, hide claim code
+        qrSection.style.display = '';
+        codeSection.style.display = 'none';
+        
+        // Generate QR code via Google Charts API
+        const qrImg = document.getElementById('dana-qr-img');
+        const encodedUrl = encodeURIComponent(danaLink);
+        qrImg.src = `https://chart.googleapis.com/chart?cht=qr&chs=300x300&chl=${encodedUrl}&choe=UTF-8`;
+        
+        // Set link button
+        const linkBtn = document.getElementById('dana-link-btn');
+        linkBtn.href = danaLink;
+    } else {
+        // No DANA link — show claim code fallback
+        qrSection.style.display = 'none';
+        codeSection.style.display = '';
+    }
+}
+
 // ==================== START GAME ====================
 function startGame() {
     if (_dt._o) {
@@ -569,7 +594,12 @@ function showPreviousResult(prev) {
     document.getElementById('result-title').textContent = 'Kamu Sudah Dapat THR!';
     document.getElementById('result-subtitle').textContent = `Skor: ${prev.s || prev.score || 0} poin`;
     document.getElementById('thr-amount').textContent = (prev.w || prev.won) ? 'Rp 10.000' : 'Rp 5.000';
+    
+    // Show DANA link if available, otherwise claim code
+    const danaLink = prev.dana_link || null;
+    displayDanaLink(danaLink);
     document.getElementById('claim-code').textContent = `Kode: ${prev.c || prev.code || prev.claim_code || '???'}`;
+    
     document.getElementById('thr-envelope').style.display = 'none';
     document.getElementById('thr-reveal').style.display = '';
     // Show replay button for fun
@@ -629,7 +659,13 @@ async function showResult(won, score) {
     }
 
     claimCode.textContent = `Kode: ${code}`;
-    Security.recordPlay(won, score, code);
+    
+    // Display DANA Kaget link + QR if available
+    const danaLink = (serverResult && serverResult.dana_link) || null;
+    displayDanaLink(danaLink);
+    
+    // Save locally with dana_link
+    Security.recordPlay(won, score, code, danaLink);
 
     const envelope = document.getElementById('thr-envelope');
     const reveal = document.getElementById('thr-reveal');
