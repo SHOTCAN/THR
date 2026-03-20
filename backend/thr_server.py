@@ -134,6 +134,19 @@ def get_current_round():
     interval_ms = THR_CONFIG['INTERVAL_MINUTES'] * 60 * 1000
     return int(elapsed_ms // interval_ms)
 
+def get_win_threshold():
+    """Dynamic win threshold - easier each round if no winner."""
+    store = load_data()
+    winners = store.get('winners', 0)
+    if winners >= THR_CONFIG['MAX_WINNERS']:
+        return 999  # impossible
+    current_round = get_current_round()
+    if current_round >= 2:
+        return 10  # Ronde 3+: 10 poin
+    if current_round >= 1:
+        return 15  # Ronde 2: 15 poin
+    return 20      # Ronde 1: 20 poin
+
 def is_window_open():
     if not THR_STATE['active']:
         return False
@@ -168,6 +181,7 @@ def status():
         'window_open': is_window_open(),
         'round': current_round,
         'slots_left': max(0, max_slots - round_plays),
+        'win_threshold': get_win_threshold(),
     })
 
 @app.route('/api/can-play', methods=['POST'])
@@ -259,6 +273,13 @@ def record_play():
     if score > 50:
         won = False
         score = min(score, 10)
+    
+    # Dynamic win threshold
+    threshold = get_win_threshold()
+    if score >= threshold and store['winners'] < THR_CONFIG['MAX_WINNERS']:
+        won = True
+    elif score < threshold:
+        won = False
     
     # Force lose if max winners reached
     if won and store['winners'] >= THR_CONFIG['MAX_WINNERS']:
@@ -399,8 +420,11 @@ def handle_telegram_update(update):
         if not text or not chat_id:
             return
         
+        # Normalize command: /start thr -> /start_thr, etc.
+        cmd = text.lower().replace(' ', '_')
+        
         # Check admin (except /start which is public)
-        if text == '/start':
+        if cmd == '/start':
             msg = (
                 "🕌 <b>THR Lebaran Bot</b>\n\n"
                 "Selamat datang! Bot ini untuk kontrol THR Lebaran.\n\n"
@@ -415,7 +439,7 @@ def handle_telegram_update(update):
             tg_send(chat_id, "⛔ Kamu bukan admin THR.")
             return
         
-        if text == '/start_thr':
+        if cmd == '/start_thr':
             if THR_STATE['active']:
                 tg_send(chat_id, "⚠️ THR sudah aktif sejak " + (THR_STATE['start_time'] or '?'))
                 return
@@ -438,7 +462,7 @@ def handle_telegram_update(update):
             )
             tg_send(chat_id, msg)
         
-        elif text == '/stop_thr':
+        elif cmd == '/stop_thr':
             THR_STATE['active'] = False
             THR_STATE['stopped'] = True
             save_state()
@@ -452,7 +476,7 @@ def handle_telegram_update(update):
             )
             tg_send(chat_id, msg)
         
-        elif text == '/status_thr':
+        elif cmd == '/status_thr':
             store = load_data()
             state = "✅ AKTIF" if THR_STATE['active'] else "⏸ NONAKTIF"
             msg = (
@@ -475,7 +499,7 @@ def handle_telegram_update(update):
             
             tg_send(chat_id, msg)
         
-        elif text == '/help_thr':
+        elif cmd == '/help_thr':
             msg = (
                 "🎮 <b>THR Bot Commands</b>\n\n"
                 "/start_thr — Mulai THR (timer jalan)\n"

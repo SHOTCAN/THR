@@ -25,7 +25,7 @@ const CONFIG = {
     INTERVAL_MINUTES: 15,
     WINDOW_MINUTES: 3,
     // Backend API
-    API_URL: 'http://localhost:5050',
+    API_URL: 'https://jokoisml.my.id/thr',
     // DANA data is SERVER-SIDE ONLY for security
 };
 
@@ -187,30 +187,35 @@ const Budget = (() => {
     }
 
     // Get current round index based on elapsed time since event start
-    function getCurrentRound() {
-        const now = new Date();
-        const midnight = new Date(now);
-        midnight.setHours(0, 0, 0, 0);
-        const msSinceMidnight = now.getTime() - midnight.getTime();
+    function getCurrentRound(startTime) {
+        if (!startTime) return 0;
+        const elapsed = Date.now() - startTime;
         const intervalMs = CONFIG.INTERVAL_MINUTES * 60 * 1000;
-        return Math.floor(msSinceMidnight / intervalMs);
+        return Math.floor(elapsed / intervalMs);
     }
 
     // Get slots for current round
-    function getCurrentSlots() {
-        const roundIdx = getCurrentRound();
-        // Cycle through the slots array
+    function getCurrentSlots(startTime) {
+        const roundIdx = getCurrentRound(startTime);
         if (roundIdx < CONFIG.SLOTS_PER_ROUND.length) {
             return CONFIG.SLOTS_PER_ROUND[roundIdx];
         }
-        // After all defined rounds, use last value
         return CONFIG.SLOTS_PER_ROUND[CONFIG.SLOTS_PER_ROUND.length - 1];
     }
 
     // Get round number (1-indexed, for display)
-    function getRoundNumber() {
-        const roundIdx = getCurrentRound();
+    function getRoundNumber(startTime) {
+        const roundIdx = getCurrentRound(startTime);
         return Math.min(roundIdx + 1, CONFIG.SLOTS_PER_ROUND.length);
+    }
+
+    // Dynamic win threshold — easier each round if no winner
+    function getWinThreshold(startTime, winnersCount) {
+        if (winnersCount >= CONFIG.MAX_WINNERS) return 999; // impossible
+        const round = getCurrentRound(startTime);
+        if (round >= 2) return 10;  // Ronde 3+: 10 poin
+        if (round >= 1) return 15;  // Ronde 2: 15 poin
+        return 20;                   // Ronde 1: 20 poin
     }
 
     // Calculate remaining budget based on rounds passed
@@ -257,7 +262,7 @@ const Budget = (() => {
     return {
         getTotalSlots, getCurrentSlots, getCurrentRound, getRoundNumber,
         getRemainingBudget, isBudgetExhausted, getWinnerCount,
-        recordWinner, isWinnerMaxed, formatRupiah
+        recordWinner, isWinnerMaxed, formatRupiah, getWinThreshold
     };
 })();
 
@@ -269,19 +274,16 @@ const Rebutan = (() => {
     let isAvailable = false;
 
     function getWindowState() {
+        if (!thrStartTime) return { available: false, remainingMs: 0 };
         const now = Date.now();
-        const midnight = new Date();
-        midnight.setHours(0, 0, 0, 0);
-        const msSinceMidnight = now - midnight.getTime();
-        const currentSlot = Math.floor(msSinceMidnight / INTERVAL_MS);
-        const slotStart = midnight.getTime() + currentSlot * INTERVAL_MS;
-        const timeInSlot = now - slotStart;
+        const elapsed = now - thrStartTime;
+        const timeInSlot = elapsed % INTERVAL_MS;
 
         if (timeInSlot <= WINDOW_MS) {
             return { available: true, remainingMs: WINDOW_MS - timeInSlot };
         } else {
-            const nextOpen = slotStart + INTERVAL_MS;
-            return { available: false, remainingMs: nextOpen - now };
+            const nextOpen = INTERVAL_MS - timeInSlot;
+            return { available: false, remainingMs: nextOpen };
         }
     }
 
@@ -296,6 +298,7 @@ const Rebutan = (() => {
 
     let thrActive = false;
     let thrStartTime = null;
+    let thrWinThreshold = 20;
 
     async function checkServerActive() {
         const status = await API.getStatus();
@@ -303,6 +306,9 @@ const Rebutan = (() => {
             thrActive = true;
             if (status.start_time && !thrStartTime) {
                 thrStartTime = new Date(status.start_time).getTime();
+            }
+            if (status.win_threshold) {
+                thrWinThreshold = status.win_threshold;
             }
         } else {
             thrActive = false;
@@ -336,10 +342,10 @@ const Rebutan = (() => {
         const state = getWindowState();
 
         // Update slots & round
-        slotsEl.textContent = Budget.getCurrentSlots();
+        slotsEl.textContent = Budget.getCurrentSlots(thrStartTime);
         const roundEl = document.getElementById('current-round');
         if (roundEl) {
-            roundEl.textContent = `${Budget.getRoundNumber()} / ${CONFIG.SLOTS_PER_ROUND.length}`;
+            roundEl.textContent = `${Budget.getRoundNumber(thrStartTime)} / ${CONFIG.SLOTS_PER_ROUND.length}`;
         }
 
         // Show prize alert if 10k is gone
@@ -396,7 +402,7 @@ const Rebutan = (() => {
         if (countdownInterval) clearInterval(countdownInterval);
     }
 
-    return { startCountdown, stopCountdown, getWindowState, isAvailable: () => isAvailable };
+    return { startCountdown, stopCountdown, getWindowState, isAvailable: () => isAvailable, getWinThreshold: () => thrWinThreshold };
 })();
 
 // ==================== STATE ====================
@@ -621,6 +627,8 @@ function startGame() {
         showScreen('game');
         const canvas = document.getElementById('game-canvas');
         game = new KetupatGame(canvas);
+        // Dynamic win threshold from server (R1=20, R2=15, R3+=10)
+        game.targetScore = Rebutan.getWinThreshold();
 
         game.onScoreChange = (score) => {
             const el = document.getElementById('score');
