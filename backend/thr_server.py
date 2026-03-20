@@ -14,10 +14,12 @@ import threading
 import requests
 from datetime import datetime, timedelta
 from functools import wraps
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 
-app = Flask(__name__)
+# Serve frontend from parent directory
+FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+app = Flask(__name__, static_folder=FRONTEND_DIR)
 
 # ==================== CONFIG ====================
 THR_CONFIG = {
@@ -551,6 +553,19 @@ def serve_qr(tier):
     if not qr_path or not os.path.exists(qr_path):
         return jsonify({'error': 'QR not found'}), 404
     return send_file(qr_path, mimetype='image/jpeg')
+
+# ==================== FRONTEND SERVING ====================
+@app.route('/')
+def serve_index():
+    return send_file(os.path.join(FRONTEND_DIR, 'index.html'))
+
+@app.route('/<path:filename>')
+def serve_static_files(filename):
+    """Serve frontend static files (JS, CSS, images)."""
+    filepath = os.path.join(FRONTEND_DIR, filename)
+    if os.path.isfile(filepath):
+        return send_from_directory(FRONTEND_DIR, filename)
+    return jsonify({'error': 'Not found'}), 404
 
 # ==================== HEALTH ====================
 @app.route('/api/health', methods=['GET'])

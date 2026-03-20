@@ -24,13 +24,8 @@ const CONFIG = {
     SLOTS_PER_ROUND: [3, 3, 3, 3],
     INTERVAL_MINUTES: 15,
     WINDOW_MINUTES: 3,
-    // Backend API — auto-detect environment
-    API_URL: (() => {
-        const host = window.location.hostname;
-        if (host === 'localhost' || host === '127.0.0.1') return 'http://localhost:5050';
-        // GitHub Pages or other remote → use LAN IP for testing (change to production URL when deployed)
-        return 'http://192.168.1.2:5050';
-    })(),
+    // Backend API — same origin (Flask serves both frontend + API)
+    API_URL: '',
     // DANA data is SERVER-SIDE ONLY for security
 };
 
