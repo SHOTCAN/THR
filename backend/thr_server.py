@@ -1,7 +1,7 @@
 """
-THR Lebaran Backend — Server-side Play Tracking & Anti-Cheat
-=============================================================
-Lightweight Flask API for securing THR game.
+THR Lebaran Backend — Server-side Play Tracking & Anti-Cheat + Telegram Bot
+==============================================================================
+Lightweight Flask API + Telegram Bot for securing THR game.
 Runs alongside trading bot on IDCloudHost.
 """
 
@@ -10,6 +10,8 @@ import json
 import time
 import hmac
 import hashlib
+import threading
+import requests
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, request, jsonify
@@ -29,19 +31,28 @@ THR_CONFIG = {
     'WINDOW_MINUTES': 3,
     'SECRET_KEY': os.environ.get('THR_SECRET', 'K3tup4t_L3b4r4n_1447H_S3rv3r!'),
     'ADMIN_KEY': os.environ.get('THR_ADMIN_KEY', 'admin_thr_2026'),
+    'TELEGRAM_TOKEN': '8592265221:AAExujIGznvA-d4rFjnJKrQL2HdDuC8gLzw',
+    'TELEGRAM_ADMIN_IDS': [],  # Will be auto-set on first /start_thr
 }
 
 # CORS — only allow GitHub Pages
 ALLOWED_ORIGINS = [
     'https://shotcan.github.io',
-    'http://localhost:5500',   # For local testing
+    'http://localhost:5500',
     'http://127.0.0.1:5500',
 ]
 CORS(app, origins=ALLOWED_ORIGINS)
 
+# ==================== ACTIVATION STATE ====================
+THR_STATE = {
+    'active': False,
+    'start_time': None,
+    'stopped': False,
+}
+
 # ==================== DATA STORE ====================
 DATA_FILE = 'data/thr_plays.json'
-LINKS_FILE = 'data/thr_dana_links.json'
+STATE_FILE = 'data/thr_state.json'
 
 def load_data():
     try:
@@ -57,23 +68,21 @@ def save_data(data):
     with open(DATA_FILE, 'w') as f:
         json.dump(data, f, indent=2, default=str)
 
-def load_links():
-    """Load DANA Kaget links pool."""
+def load_state():
+    global THR_STATE
     try:
-        if os.path.exists(LINKS_FILE):
-            with open(LINKS_FILE, 'r') as f:
-                return json.load(f)
+        if os.path.exists(STATE_FILE):
+            with open(STATE_FILE, 'r') as f:
+                THR_STATE.update(json.load(f))
     except Exception:
         pass
-    return {'win_links': [], 'lose_links': []}
 
-def save_links(links):
-    os.makedirs(os.path.dirname(LINKS_FILE), exist_ok=True)
-    with open(LINKS_FILE, 'w') as f:
-        json.dump(links, f, indent=2, default=str)
+def save_state():
+    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+    with open(STATE_FILE, 'w') as f:
+        json.dump(THR_STATE, f, indent=2, default=str)
 
 # ==================== SECURITY ====================
-# Rate limiter: max 10 requests per minute per IP
 _rate_limits = {}
 
 def rate_limit(max_per_minute=10):
@@ -83,23 +92,17 @@ def rate_limit(max_per_minute=10):
             ip = request.headers.get('X-Forwarded-For', request.remote_addr)
             now = time.time()
             key = f"{ip}:{f.__name__}"
-            
             if key not in _rate_limits:
                 _rate_limits[key] = []
-            
-            # Clean old entries
             _rate_limits[key] = [t for t in _rate_limits[key] if now - t < 60]
-            
             if len(_rate_limits[key]) >= max_per_minute:
-                return jsonify({'error': 'Terlalu banyak request. Coba lagi nanti.', 'code': 'RATE_LIMIT'}), 429
-            
+                return jsonify({'error': 'Terlalu banyak request.', 'code': 'RATE_LIMIT'}), 429
             _rate_limits[key].append(now)
             return f(*args, **kwargs)
         return wrapper
     return decorator
 
 def generate_claim_code(fingerprint, won, score):
-    """Generate HMAC-verified claim code (backup if no DANA link available)."""
     prefix = 'W' if won else 'T'
     ts = hex(int(time.time()))[-6:].upper()
     payload = f"{prefix}:{fingerprint}:{score}:{ts}"
@@ -110,55 +113,54 @@ def generate_claim_code(fingerprint, won, score):
     ).hexdigest()[:8].upper()
     return f"{prefix}-{ts}-{signature}"
 
-def get_dana_link(won):
-    """Get next available DANA Kaget link from pool."""
-    links = load_links()
-    pool = 'win_links' if won else 'lose_links'
-    for link in links.get(pool, []):
-        if not link.get('used', False):
-            link['used'] = True
-            link['used_at'] = datetime.utcnow().isoformat()
-            save_links(links)
-            return link.get('url', '')
-    return None  # No links available
-
-def verify_claim_code(code):
-    """Verify a claim code is genuine (from our server)."""
-    try:
-        parts = code.split('-')
-        if len(parts) != 3:
-            return False
-        prefix, ts, sig = parts
-        # We can't fully re-verify without the original payload,
-        # but we can check format and that it exists in our records
-        return prefix in ('W', 'T') and len(sig) == 8
-    except Exception:
-        return False
-
 def get_current_round():
-    """Get current round based on time."""
-    now = datetime.utcnow() + timedelta(hours=7)  # WIB
-    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    ms_since_midnight = (now - midnight).total_seconds() * 1000
+    if not THR_STATE['active'] or not THR_STATE['start_time']:
+        return 0
+    start = datetime.fromisoformat(THR_STATE['start_time'])
+    now = datetime.utcnow() + timedelta(hours=7)
+    elapsed_ms = (now - start).total_seconds() * 1000
     interval_ms = THR_CONFIG['INTERVAL_MINUTES'] * 60 * 1000
-    return int(ms_since_midnight // interval_ms)
+    return int(elapsed_ms // interval_ms)
 
 def is_window_open():
-    """Check if current THR window is open."""
-    now = datetime.utcnow() + timedelta(hours=7)  # WIB
-    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    ms_since_midnight = (now - midnight).total_seconds() * 1000
+    if not THR_STATE['active']:
+        return False
+    if not THR_STATE['start_time']:
+        return False
+    start = datetime.fromisoformat(THR_STATE['start_time'])
+    now = datetime.utcnow() + timedelta(hours=7)
+    elapsed_ms = (now - start).total_seconds() * 1000
     interval_ms = THR_CONFIG['INTERVAL_MINUTES'] * 60 * 1000
     window_ms = THR_CONFIG['WINDOW_MINUTES'] * 60 * 1000
-    time_in_slot = ms_since_midnight % interval_ms
+    time_in_slot = elapsed_ms % interval_ms
     return time_in_slot <= window_ms
 
 # ==================== API ROUTES ====================
 
+@app.route('/api/status', methods=['GET'])
+def status():
+    store = load_data()
+    current_round = get_current_round()
+    round_idx = min(current_round, len(THR_CONFIG['SLOTS_PER_ROUND']) - 1)
+    max_slots = THR_CONFIG['SLOTS_PER_ROUND'][round_idx]
+    round_plays = len([p for p in store['plays'] if p.get('round', -1) == current_round])
+    
+    return jsonify({
+        'active': THR_STATE['active'],
+        'start_time': THR_STATE['start_time'],
+        'total_players': len(store['plays']),
+        'max_players': THR_CONFIG['MAX_TOTAL_PLAYERS'],
+        'winners': store['winners'],
+        'max_winners': THR_CONFIG['MAX_WINNERS'],
+        'budget_left': THR_CONFIG['TOTAL_BUDGET'] - store['total_spent'],
+        'window_open': is_window_open(),
+        'round': current_round,
+        'slots_left': max(0, max_slots - round_plays),
+    })
+
 @app.route('/api/can-play', methods=['POST'])
 @rate_limit(max_per_minute=15)
 def can_play():
-    """Check if user can play. Returns slot info."""
     data = request.get_json()
     if not data:
         return jsonify({'error': 'Invalid request'}), 400
@@ -168,27 +170,24 @@ def can_play():
         return jsonify({'error': 'Invalid fingerprint'}), 400
     
     store = load_data()
-    
-    # Check if fingerprint already played
     played = any(p['fingerprint'] == fingerprint for p in store['plays'])
-    
-    # Check budget
     total_players = len(store['plays'])
     budget_left = THR_CONFIG['TOTAL_BUDGET'] - store['total_spent']
-    
-    # Check window
     window_open = is_window_open()
     current_round = get_current_round()
     
-    # Slots remaining in current round
     round_idx = min(current_round, len(THR_CONFIG['SLOTS_PER_ROUND']) - 1)
     max_slots = THR_CONFIG['SLOTS_PER_ROUND'][round_idx]
     round_plays = len([p for p in store['plays'] if p.get('round', -1) == current_round])
     slots_left = max(0, max_slots - round_plays)
     
+    can = (not played and THR_STATE['active'] and window_open 
+           and budget_left > 0 and slots_left > 0)
+    
     return jsonify({
-        'can_play': not played and window_open and budget_left > 0 and slots_left > 0,
+        'can_play': can,
         'already_played': played,
+        'active': THR_STATE['active'],
         'window_open': window_open,
         'budget_exhausted': budget_left <= 0,
         'slots_left': slots_left,
@@ -197,14 +196,12 @@ def can_play():
         'winners': store['winners'],
         'max_winners': THR_CONFIG['MAX_WINNERS'],
         'round': current_round,
-        # If already played, return their previous result
         'previous': next((p for p in store['plays'] if p['fingerprint'] == fingerprint), None),
     })
 
 @app.route('/api/record', methods=['POST'])
 @rate_limit(max_per_minute=5)
 def record_play():
-    """Record a play result (server-side verification)."""
     data = request.get_json()
     if not data:
         return jsonify({'error': 'Invalid request'}), 400
@@ -223,25 +220,29 @@ def record_play():
     if any(p['fingerprint'] == fingerprint for p in store['plays']):
         prev = next(p for p in store['plays'] if p['fingerprint'] == fingerprint)
         return jsonify({
-            'error': 'Kamu sudah main!', 
+            'error': 'Kamu sudah main!',
             'code': 'ALREADY_PLAYED',
             'previous': prev,
         }), 409
     
+    # Anti-cheat: THR active?
+    if not THR_STATE['active']:
+        return jsonify({'error': 'THR belum dibuka!', 'code': 'NOT_ACTIVE'}), 403
+    
     # Anti-cheat: window open?
     if not is_window_open():
-        return jsonify({'error': 'THR belum dibuka!', 'code': 'WINDOW_CLOSED'}), 403
+        return jsonify({'error': 'Ronde belum dibuka!', 'code': 'WINDOW_CLOSED'}), 403
     
-    # Anti-cheat: budget check
+    # Anti-cheat: budget
     if store['total_spent'] >= THR_CONFIG['TOTAL_BUDGET']:
         return jsonify({'error': 'Budget habis!', 'code': 'BUDGET_EXHAUSTED'}), 403
     
-    # Anti-cheat: game duration too short (< 13 seconds = cheating)
+    # Anti-cheat: game too short
     if game_duration < 13000:
         won = False
         score = min(score, 5)
     
-    # Anti-cheat: score too high (impossible)
+    # Anti-cheat: impossible score
     if score > 50:
         won = False
         score = min(score, 10)
@@ -250,16 +251,9 @@ def record_play():
     if won and store['winners'] >= THR_CONFIG['MAX_WINNERS']:
         won = False
     
-    # Determine prize
     prize = THR_CONFIG['PRIZE_WIN'] if won else THR_CONFIG['PRIZE_LOSE']
-    
-    # Generate secure claim code (backup)
     claim_code = generate_claim_code(fingerprint, won, score)
     
-    # Get DANA Kaget link from pool
-    dana_link = get_dana_link(won)
-    
-    # Record play
     ip = request.headers.get('X-Forwarded-For', request.remote_addr)
     play_record = {
         'fingerprint': fingerprint,
@@ -268,54 +262,39 @@ def record_play():
         'won': won,
         'prize': prize,
         'claim_code': claim_code,
-        'dana_link': dana_link,
         'round': get_current_round(),
         'duration': game_duration,
         'timestamp': datetime.utcnow().isoformat(),
         'user_agent': request.headers.get('User-Agent', '')[:100],
-        'claimed': bool(dana_link),
     }
     
     store['plays'].append(play_record)
     store['total_spent'] += prize
     if won:
         store['winners'] += 1
-    
     save_data(store)
+    
+    # Notify admin via Telegram
+    notify_admin_play(play_record)
     
     return jsonify({
         'success': True,
         'won': won,
         'prize': prize,
         'claim_code': claim_code,
-        'dana_link': dana_link,
         'message': 'Selamat! THR kamu sudah dicatat.' if won else 'THR kamu sudah dicatat!',
     })
 
-@app.route('/api/status', methods=['GET'])
-def status():
-    """Public status — how many slots left etc."""
-    store = load_data()
-    return jsonify({
-        'total_players': len(store['plays']),
-        'max_players': THR_CONFIG['MAX_TOTAL_PLAYERS'],
-        'winners': store['winners'],
-        'max_winners': THR_CONFIG['MAX_WINNERS'],
-        'budget_left': THR_CONFIG['TOTAL_BUDGET'] - store['total_spent'],
-        'window_open': is_window_open(),
-        'round': get_current_round(),
-    })
+# ==================== ADMIN API ====================
 
 @app.route('/api/admin', methods=['GET'])
 def admin():
-    """Admin view — see all plays and claims. Requires admin key."""
     key = request.args.get('key', '')
     if key != THR_CONFIG['ADMIN_KEY']:
         return jsonify({'error': 'Unauthorized'}), 401
-    
     store = load_data()
     return jsonify({
-        'config': {k: v for k, v in THR_CONFIG.items() if k != 'SECRET_KEY'},
+        'state': THR_STATE,
         'plays': store['plays'],
         'winners': store['winners'],
         'total_spent': store['total_spent'],
@@ -323,98 +302,189 @@ def admin():
         'total_players': len(store['plays']),
     })
 
-@app.route('/api/admin/claim', methods=['POST'])
-def admin_claim():
-    """Admin: mark a claim code as claimed (THR sent)."""
-    key = request.args.get('key', '')
-    if key != THR_CONFIG['ADMIN_KEY']:
-        return jsonify({'error': 'Unauthorized'}), 401
-    
-    data = request.get_json()
-    code = data.get('code', '')
-    
-    store = load_data()
-    for play in store['plays']:
-        if play['claim_code'] == code:
-            play['claimed'] = True
-            play['claimed_at'] = datetime.utcnow().isoformat()
-            save_data(store)
-            return jsonify({'success': True, 'play': play})
-    
-    return jsonify({'error': 'Code not found'}), 404
-
-@app.route('/api/admin/add-links', methods=['POST'])
-def admin_add_links():
-    """Admin: add DANA Kaget links to the pool."""
-    key = request.args.get('key', '')
-    if key != THR_CONFIG['ADMIN_KEY']:
-        return jsonify({'error': 'Unauthorized'}), 401
-    
-    data = request.get_json()
-    link_type = data.get('type', 'lose')  # 'win' or 'lose'
-    urls = data.get('urls', [])  # list of DANA Kaget URLs
-    
-    if not urls:
-        return jsonify({'error': 'No URLs provided'}), 400
-    
-    links = load_links()
-    pool = 'win_links' if link_type == 'win' else 'lose_links'
-    
-    added = 0
-    for url in urls:
-        url = url.strip()
-        if url and 'dana.id' in url:
-            # Check not duplicate
-            existing = [l['url'] for l in links.get(pool, [])]
-            if url not in existing:
-                links[pool].append({
-                    'url': url,
-                    'used': False,
-                    'added_at': datetime.utcnow().isoformat(),
-                })
-                added += 1
-    
-    save_links(links)
-    
-    return jsonify({
-        'success': True,
-        'added': added,
-        'total_win_links': len(links.get('win_links', [])),
-        'total_lose_links': len(links.get('lose_links', [])),
-        'available_win': len([l for l in links.get('win_links', []) if not l.get('used')]),
-        'available_lose': len([l for l in links.get('lose_links', []) if not l.get('used')]),
-    })
-
-@app.route('/api/admin/links', methods=['GET'])
-def admin_links():
-    """Admin: see all DANA Kaget links and their status."""
-    key = request.args.get('key', '')
-    if key != THR_CONFIG['ADMIN_KEY']:
-        return jsonify({'error': 'Unauthorized'}), 401
-    
-    links = load_links()
-    return jsonify({
-        'win_links': links.get('win_links', []),
-        'lose_links': links.get('lose_links', []),
-        'available_win': len([l for l in links.get('win_links', []) if not l.get('used')]),
-        'available_lose': len([l for l in links.get('lose_links', []) if not l.get('used')]),
-    })
-
 @app.route('/api/admin/reset', methods=['POST'])
 def admin_reset():
-    """Admin: reset all data (emergency)."""
     key = request.args.get('key', '')
     if key != THR_CONFIG['ADMIN_KEY']:
         return jsonify({'error': 'Unauthorized'}), 401
-    
     save_data({'plays': [], 'winners': 0, 'total_spent': 0, 'created': datetime.utcnow().isoformat()})
+    THR_STATE['active'] = False
+    THR_STATE['start_time'] = None
+    THR_STATE['stopped'] = False
+    save_state()
     return jsonify({'success': True, 'message': 'All data reset'})
+
+# ==================== TELEGRAM BOT ====================
+TELEGRAM_API = f"https://api.telegram.org/bot{THR_CONFIG['TELEGRAM_TOKEN']}"
+
+def tg_send(chat_id, text, parse_mode='HTML'):
+    try:
+        requests.post(f"{TELEGRAM_API}/sendMessage", json={
+            'chat_id': chat_id,
+            'text': text,
+            'parse_mode': parse_mode,
+        }, timeout=5)
+    except Exception as e:
+        print(f"[TG] Send error: {e}")
+
+def notify_admin_play(play):
+    """Notify admin when someone plays."""
+    icon = '🏆' if play['won'] else '🎁'
+    prize = f"Rp {play['prize']:,}".replace(',', '.')
+    store = load_data()
+    msg = (
+        f"{icon} <b>THR Dimainkan!</b>\n\n"
+        f"Skor: {play['score']} poin\n"
+        f"Hadiah: {prize}\n"
+        f"Ronde: {play['round'] + 1}\n"
+        f"IP: {play['ip']}\n"
+        f"Total pemain: {len(store['plays'])}/{THR_CONFIG['MAX_TOTAL_PLAYERS']}\n"
+        f"Sisa budget: Rp {THR_CONFIG['TOTAL_BUDGET'] - store['total_spent']:,}".replace(',', '.')
+    )
+    for admin_id in THR_CONFIG['TELEGRAM_ADMIN_IDS']:
+        tg_send(admin_id, msg)
+
+def handle_telegram_update(update):
+    """Process incoming Telegram message."""
+    try:
+        msg = update.get('message', {})
+        text = msg.get('text', '').strip()
+        chat_id = msg.get('chat', {}).get('id')
+        user_id = msg.get('from', {}).get('id')
+        
+        if not text or not chat_id:
+            return
+        
+        # Auto-register first user as admin
+        if user_id and user_id not in THR_CONFIG['TELEGRAM_ADMIN_IDS']:
+            if text.startswith('/start_thr') or text.startswith('/stop_thr'):
+                THR_CONFIG['TELEGRAM_ADMIN_IDS'].append(user_id)
+        
+        # Check admin
+        if user_id not in THR_CONFIG['TELEGRAM_ADMIN_IDS']:
+            tg_send(chat_id, "⛔ Kamu bukan admin THR.")
+            return
+        
+        if text == '/start_thr':
+            if THR_STATE['active']:
+                tg_send(chat_id, "⚠️ THR sudah aktif sejak " + (THR_STATE['start_time'] or '?'))
+                return
+            
+            now_wib = datetime.utcnow() + timedelta(hours=7)
+            THR_STATE['active'] = True
+            THR_STATE['start_time'] = now_wib.isoformat()
+            THR_STATE['stopped'] = False
+            save_state()
+            
+            store = load_data()
+            msg = (
+                "🎉 <b>THR LEBARAN DIBUKA!</b> 🎉\n\n"
+                f"⏰ Mulai: {now_wib.strftime('%H:%M WIB')}\n"
+                f"📋 Total ronde: {len(THR_CONFIG['SLOTS_PER_ROUND'])}\n"
+                f"⏱ Interval: {THR_CONFIG['INTERVAL_MINUTES']} menit\n"
+                f"💰 Budget: Rp {THR_CONFIG['TOTAL_BUDGET']:,}\n".replace(',', '.') +
+                f"👥 Max pemain: {THR_CONFIG['MAX_TOTAL_PLAYERS']}\n\n"
+                "Timer sudah jalan! Ronde 1 dimulai sekarang."
+            )
+            tg_send(chat_id, msg)
+        
+        elif text == '/stop_thr':
+            THR_STATE['active'] = False
+            THR_STATE['stopped'] = True
+            save_state()
+            
+            store = load_data()
+            msg = (
+                "🛑 <b>THR DIHENTIKAN</b>\n\n"
+                f"Total pemain: {len(store['plays'])}\n"
+                f"Budget terpakai: Rp {store['total_spent']:,}\n".replace(',', '.') +
+                f"Sisa: Rp {THR_CONFIG['TOTAL_BUDGET'] - store['total_spent']:,}".replace(',', '.')
+            )
+            tg_send(chat_id, msg)
+        
+        elif text == '/status_thr':
+            store = load_data()
+            state = "✅ AKTIF" if THR_STATE['active'] else "⏸ NONAKTIF"
+            msg = (
+                f"📊 <b>Status THR</b>\n\n"
+                f"Status: {state}\n"
+                f"Mulai: {THR_STATE.get('start_time', '-')}\n"
+                f"Ronde: {get_current_round() + 1}\n"
+                f"Window: {'🟢 Terbuka' if is_window_open() else '🔴 Tertutup'}\n"
+                f"Pemain: {len(store['plays'])}/{THR_CONFIG['MAX_TOTAL_PLAYERS']}\n"
+                f"Pemenang 10k: {store['winners']}/{THR_CONFIG['MAX_WINNERS']}\n"
+                f"Budget sisa: Rp {THR_CONFIG['TOTAL_BUDGET'] - store['total_spent']:,}\n".replace(',', '.') +
+                "\nDaftar pemain:\n"
+            )
+            for i, p in enumerate(store['plays'], 1):
+                icon = '🏆' if p['won'] else '🎁'
+                msg += f"{i}. {icon} Skor:{p['score']} Rp{p['prize']:,} R{p['round']+1}\n"
+            
+            if not store['plays']:
+                msg += "(Belum ada pemain)"
+            
+            tg_send(chat_id, msg)
+        
+        elif text == '/help_thr':
+            msg = (
+                "🎮 <b>THR Bot Commands</b>\n\n"
+                "/start_thr — Mulai THR (timer jalan)\n"
+                "/stop_thr — Hentikan THR\n"
+                "/status_thr — Lihat status & pemain\n"
+                "/help_thr — Bantuan"
+            )
+            tg_send(chat_id, msg)
+        
+        elif text == '/start':
+            msg = (
+                "🕌 <b>THR Lebaran Bot</b>\n\n"
+                "Selamat datang! Bot ini untuk kontrol THR Lebaran.\n\n"
+                "/start_thr — Mulai THR\n"
+                "/status_thr — Lihat status\n"
+                "/help_thr — Bantuan"
+            )
+            tg_send(chat_id, msg)
+    
+    except Exception as e:
+        print(f"[TG] Error handling update: {e}")
+
+def telegram_polling():
+    """Long-polling for Telegram updates."""
+    print("[TG] Starting Telegram bot polling...")
+    offset = 0
+    while True:
+        try:
+            resp = requests.get(f"{TELEGRAM_API}/getUpdates", params={
+                'offset': offset,
+                'timeout': 30,
+            }, timeout=35)
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                for update in data.get('result', []):
+                    offset = update['update_id'] + 1
+                    handle_telegram_update(update)
+        except Exception as e:
+            print(f"[TG] Polling error: {e}")
+            time.sleep(5)
 
 # ==================== HEALTH ====================
 @app.route('/api/health', methods=['GET'])
 def health():
-    return jsonify({'status': 'ok', 'service': 'THR Lebaran 1447H', 'time': datetime.utcnow().isoformat()})
+    return jsonify({
+        'status': 'ok',
+        'service': 'THR Lebaran 1447H',
+        'active': THR_STATE['active'],
+        'time': datetime.utcnow().isoformat(),
+    })
 
 if __name__ == '__main__':
     os.makedirs('data', exist_ok=True)
+    load_state()
+    
+    # Start Telegram bot in background thread
+    tg_thread = threading.Thread(target=telegram_polling, daemon=True)
+    tg_thread.start()
+    print("[THR] Server starting on port 5050...")
+    
     app.run(host='0.0.0.0', port=5050, debug=False)

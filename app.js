@@ -20,11 +20,17 @@ const CONFIG = {
     PRIZE_WIN: 10000,           // Prize for winners: Rp 10.000
     PRIZE_LOSE: 5000,           // Prize for losers: Rp 5.000
     MAX_WINNERS: 2,             // Max people who can win 10k
+    MAX_TOTAL_PLAYERS: 12,
     SLOTS_PER_ROUND: [3, 3, 3, 3], // 3 orang per ronde × 4 ronde = 12 orang
     INTERVAL_MINUTES: 15,       // Minutes between rounds
     WINDOW_MINUTES: 3,          // Minutes the window stays open
     // Backend API — change to your server URL
     API_URL: 'https://jokoisml.my.id/thr',
+    // DANA Kaget — hardcoded links & QR images
+    DANA_5K_LINK: 'https://link.dana.id/danakaget?c=s6flgsagl&r=d6OJ2D&orderId=20260321101214777915010300166212768896667',
+    DANA_10K_LINK: 'https://link.dana.id/danakaget?c=srmd58jc5&r=d6OJ2D&orderId=20260321101214735915010300166212768932147',
+    DANA_5K_QR: 'qrcodde/QRcode_5k.jpeg',
+    DANA_10K_QR: 'qrcodde/QRcode_10k.jpeg',
 };
 
 // ==================== SECURITY MODULE ====================
@@ -284,12 +290,30 @@ const Rebutan = (() => {
     }
 
     function startCountdown() {
+        // Check server activation state first
+        checkServerActive();
         updateCountdown();
         countdownInterval = setInterval(updateCountdown, 1000);
+        // Poll server every 5 seconds for activation
+        setInterval(checkServerActive, 5000);
+    }
+
+    let thrActive = false;
+    let thrStartTime = null;
+
+    async function checkServerActive() {
+        const status = await API.getStatus();
+        if (status && status.active) {
+            thrActive = true;
+            if (status.start_time && !thrStartTime) {
+                thrStartTime = new Date(status.start_time).getTime();
+            }
+        } else {
+            thrActive = false;
+        }
     }
 
     function updateCountdown() {
-        const state = getWindowState();
         const btn = document.getElementById('btn-start');
         const btnText = btn.querySelector('.btn-text');
         const cdLabel = document.getElementById('countdown-label');
@@ -299,6 +323,21 @@ const Rebutan = (() => {
         const slotsEl = document.getElementById('slots-remaining');
         const budgetEl = document.getElementById('budget-remaining');
         const prizeAlert = document.getElementById('prize-alert');
+
+        // If THR not activated by admin yet
+        if (!thrActive) {
+            cdLabel.textContent = '⏳ Menunggu THR Dibuka oleh Admin...';
+            cdCard.classList.remove('available');
+            cdMinutes.textContent = '--';
+            cdSeconds.textContent = '--';
+            btn.disabled = true;
+            btnText.textContent = '⏳ THR Belum Dibuka';
+            slotsEl.textContent = '-';
+            return;
+        }
+
+        // THR is active — use timer relative to start time
+        const state = getWindowState();
 
         // Update slots & quota
         slotsEl.textContent = Budget.getCurrentSlots();
@@ -465,27 +504,25 @@ const API = {
 };
 
 // ==================== DANA KAGET DISPLAY ====================
-function displayDanaLink(danaLink) {
+function displayDanaLink(won) {
     const qrSection = document.getElementById('dana-qr-section');
     const codeSection = document.getElementById('claim-code-section');
     
-    if (danaLink) {
-        // Show QR + link, hide claim code
-        qrSection.style.display = '';
-        codeSection.style.display = 'none';
-        
-        // Generate QR code via Google Charts API
-        const qrImg = document.getElementById('dana-qr-img');
-        const encodedUrl = encodeURIComponent(danaLink);
-        qrImg.src = `https://chart.googleapis.com/chart?cht=qr&chs=300x300&chl=${encodedUrl}&choe=UTF-8`;
-        
-        // Set link button
-        const linkBtn = document.getElementById('dana-link-btn');
-        linkBtn.href = danaLink;
+    // Always show QR + link for the correct prize tier
+    qrSection.style.display = '';
+    codeSection.style.display = 'none';
+    
+    const qrImg = document.getElementById('dana-qr-img');
+    const linkBtn = document.getElementById('dana-link-btn');
+    
+    if (won) {
+        qrImg.src = CONFIG.DANA_10K_QR;
+        linkBtn.href = CONFIG.DANA_10K_LINK;
+        linkBtn.textContent = '💰 Buka DANA Kaget Rp 10.000';
     } else {
-        // No DANA link — show claim code fallback
-        qrSection.style.display = 'none';
-        codeSection.style.display = '';
+        qrImg.src = CONFIG.DANA_5K_QR;
+        linkBtn.href = CONFIG.DANA_5K_LINK;
+        linkBtn.textContent = '💰 Buka DANA Kaget Rp 5.000';
     }
 }
 
@@ -590,15 +627,14 @@ function startGame() {
 // ==================== SHOW PREVIOUS RESULT ====================
 function showPreviousResult(prev) {
     showScreen('result');
+    const didWin = prev.w || prev.won || false;
     document.getElementById('result-icon').textContent = '🔒';
     document.getElementById('result-title').textContent = 'Kamu Sudah Dapat THR!';
     document.getElementById('result-subtitle').textContent = `Skor: ${prev.s || prev.score || 0} poin`;
-    document.getElementById('thr-amount').textContent = (prev.w || prev.won) ? 'Rp 10.000' : 'Rp 5.000';
+    document.getElementById('thr-amount').textContent = didWin ? 'Rp 10.000' : 'Rp 5.000';
     
-    // Show DANA link if available, otherwise claim code
-    const danaLink = prev.dana_link || null;
-    displayDanaLink(danaLink);
-    document.getElementById('claim-code').textContent = `Kode: ${prev.c || prev.code || prev.claim_code || '???'}`;
+    // Show correct QR code based on win/lose
+    displayDanaLink(didWin);
     
     document.getElementById('thr-envelope').style.display = 'none';
     document.getElementById('thr-reveal').style.display = '';
@@ -660,12 +696,11 @@ async function showResult(won, score) {
 
     claimCode.textContent = `Kode: ${code}`;
     
-    // Display DANA Kaget link + QR if available
-    const danaLink = (serverResult && serverResult.dana_link) || null;
-    displayDanaLink(danaLink);
+    // Display correct DANA Kaget QR + link based on win/lose
+    displayDanaLink(won);
     
-    // Save locally with dana_link
-    Security.recordPlay(won, score, code, danaLink);
+    // Save locally
+    Security.recordPlay(won, score, code);
 
     const envelope = document.getElementById('thr-envelope');
     const reveal = document.getElementById('thr-reveal');
