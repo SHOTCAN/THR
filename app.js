@@ -302,16 +302,23 @@ const Rebutan = (() => {
 
     async function checkServerActive() {
         const status = await API.getStatus();
+        const wasActive = thrActive;
         if (status && status.active) {
             thrActive = true;
-            if (status.start_time && !thrStartTime) {
+            // Always sync start_time from server (handles stop+restart)
+            if (status.start_time) {
                 thrStartTime = new Date(status.start_time).getTime();
             }
             if (status.win_threshold) {
                 thrWinThreshold = status.win_threshold;
             }
+            // Auto-refresh UI when admin just activated
+            if (!wasActive) {
+                updateCountdown();
+            }
         } else {
             thrActive = false;
+            thrStartTime = null;
         }
     }
 

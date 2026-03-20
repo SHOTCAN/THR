@@ -62,6 +62,9 @@ THR_STATE = {
     'stopped': False,
 }
 
+# Track processed Telegram updates to prevent duplicates
+_processed_updates = set()
+
 # ==================== DATA STORE ====================
 DATA_FILE = 'data/thr_plays.json'
 STATE_FILE = 'data/thr_state.json'
@@ -440,8 +443,8 @@ def handle_telegram_update(update):
             return
         
         if cmd == '/start_thr':
-            if THR_STATE['active']:
-                tg_send(chat_id, "⚠️ THR sudah aktif sejak " + (THR_STATE['start_time'] or '?'))
+            if THR_STATE['active'] and not THR_STATE.get('stopped', False):
+                tg_send(chat_id, "⚠️ THR sudah aktif sejak " + str(THR_STATE.get('start_time', '?')))
                 return
             
             now_wib = datetime.utcnow() + timedelta(hours=7)
@@ -464,6 +467,7 @@ def handle_telegram_update(update):
         
         elif cmd == '/stop_thr':
             THR_STATE['active'] = False
+            THR_STATE['start_time'] = None
             THR_STATE['stopped'] = True
             save_state()
             
@@ -528,7 +532,15 @@ def telegram_polling():
             if resp.status_code == 200:
                 data = resp.json()
                 for update in data.get('result', []):
-                    offset = update['update_id'] + 1
+                    uid = update['update_id']
+                    offset = uid + 1
+                    # Skip already processed
+                    if uid in _processed_updates:
+                        continue
+                    _processed_updates.add(uid)
+                    # Keep set small
+                    if len(_processed_updates) > 100:
+                        _processed_updates.clear()
                     handle_telegram_update(update)
         except Exception as e:
             print(f"[TG] Polling error: {e}")
