@@ -16,21 +16,17 @@ setInterval(() => {
 // ==================== CONFIG ====================
 // EDIT THESE VALUES TO CUSTOMIZE YOUR THR EVENT!
 const CONFIG = {
-    TOTAL_BUDGET: 70000,        // Total budget Rp 70.000
-    PRIZE_WIN: 10000,           // Prize for winners: Rp 10.000
-    PRIZE_LOSE: 5000,           // Prize for losers: Rp 5.000
-    MAX_WINNERS: 2,             // Max people who can win 10k
+    TOTAL_BUDGET: 70000,
+    PRIZE_WIN: 10000,
+    PRIZE_LOSE: 5000,
+    MAX_WINNERS: 2,
     MAX_TOTAL_PLAYERS: 12,
-    SLOTS_PER_ROUND: [3, 3, 3, 3], // 3 orang per ronde × 4 ronde = 12 orang
-    INTERVAL_MINUTES: 15,       // Minutes between rounds
-    WINDOW_MINUTES: 3,          // Minutes the window stays open
-    // Backend API — change to your server URL
-    API_URL: 'https://jokoisml.my.id/thr',
-    // DANA Kaget — hardcoded links & QR images
-    DANA_5K_LINK: 'https://link.dana.id/danakaget?c=s6flgsagl&r=d6OJ2D&orderId=20260321101214777915010300166212768896667',
-    DANA_10K_LINK: 'https://link.dana.id/danakaget?c=srmd58jc5&r=d6OJ2D&orderId=20260321101214735915010300166212768932147',
-    DANA_5K_QR: 'qrcodde/QRcode_5k.jpeg',
-    DANA_10K_QR: 'qrcodde/QRcode_10k.jpeg',
+    SLOTS_PER_ROUND: [3, 3, 3, 3],
+    INTERVAL_MINUTES: 15,
+    WINDOW_MINUTES: 3,
+    // Backend API
+    API_URL: 'http://localhost:5050',
+    // DANA data is SERVER-SIDE ONLY for security
 };
 
 // ==================== SECURITY MODULE ====================
@@ -339,17 +335,11 @@ const Rebutan = (() => {
         // THR is active — use timer relative to start time
         const state = getWindowState();
 
-        // Update slots & quota
+        // Update slots & round
         slotsEl.textContent = Budget.getCurrentSlots();
-        const quotaEl = document.getElementById('quota-remaining');
-        if (quotaEl) {
-            const totalSlots = Budget.getTotalSlots();
-            const round = Budget.getCurrentRound();
-            let played = 0;
-            for (let i = 0; i < Math.min(round, CONFIG.SLOTS_PER_ROUND.length); i++) {
-                played += CONFIG.SLOTS_PER_ROUND[i];
-            }
-            quotaEl.textContent = Math.max(totalSlots - played, 0);
+        const roundEl = document.getElementById('current-round');
+        if (roundEl) {
+            roundEl.textContent = `${Budget.getRoundNumber()} / ${CONFIG.SLOTS_PER_ROUND.length}`;
         }
 
         // Show prize alert if 10k is gone
@@ -505,25 +495,26 @@ const API = {
 };
 
 // ==================== DANA KAGET DISPLAY ====================
-function displayDanaLink(won) {
+function displayDanaLink(danaLink, qrUrl) {
     const qrSection = document.getElementById('dana-qr-section');
     const codeSection = document.getElementById('claim-code-section');
     
-    // Always show QR + link for the correct prize tier
-    qrSection.style.display = '';
-    codeSection.style.display = 'none';
-    
-    const qrImg = document.getElementById('dana-qr-img');
-    const linkBtn = document.getElementById('dana-link-btn');
-    
-    if (won) {
-        qrImg.src = CONFIG.DANA_10K_QR;
-        linkBtn.href = CONFIG.DANA_10K_LINK;
-        linkBtn.textContent = '💰 Buka DANA Kaget Rp 10.000';
+    if (danaLink) {
+        // Show QR + link from server (secure)
+        qrSection.style.display = '';
+        codeSection.style.display = 'none';
+        
+        const qrImg = document.getElementById('dana-qr-img');
+        const linkBtn = document.getElementById('dana-link-btn');
+        
+        // QR image served from backend
+        qrImg.src = qrUrl || `${CONFIG.API_URL}/api/qr/${danaLink.includes('srmd58jc5') ? '10k' : '5k'}`;
+        linkBtn.href = danaLink;
+        linkBtn.textContent = '💰 Buka DANA Kaget';
     } else {
-        qrImg.src = CONFIG.DANA_5K_QR;
-        linkBtn.href = CONFIG.DANA_5K_LINK;
-        linkBtn.textContent = '💰 Buka DANA Kaget Rp 5.000';
+        // No link available
+        qrSection.style.display = 'none';
+        codeSection.style.display = '';
     }
 }
 
@@ -682,8 +673,8 @@ function showPreviousResult(prev) {
     document.getElementById('result-subtitle').textContent = `Skor: ${prev.s || prev.score || 0} poin`;
     document.getElementById('thr-amount').textContent = didWin ? 'Rp 10.000' : 'Rp 5.000';
     
-    // Show correct QR code based on win/lose
-    displayDanaLink(didWin);
+    // Show DANA info from server (if available from previous play)
+    displayDanaLink(prev.dana_link || null, prev.qr_url || null);
     
     document.getElementById('thr-envelope').style.display = 'none';
     document.getElementById('thr-reveal').style.display = '';
@@ -745,8 +736,10 @@ async function showResult(won, score) {
 
     claimCode.textContent = `Kode: ${code}`;
     
-    // Display correct DANA Kaget QR + link based on win/lose
-    displayDanaLink(won);
+    // Display DANA Kaget QR + link from server response
+    const danaLink = (serverResult && serverResult.dana_link) || null;
+    const qrUrl = (serverResult && serverResult.qr_url) || null;
+    displayDanaLink(danaLink, qrUrl);
     
     // Save locally
     Security.recordPlay(won, score, code);

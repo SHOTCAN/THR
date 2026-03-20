@@ -35,11 +35,23 @@ THR_CONFIG = {
     'TELEGRAM_ADMIN_IDS': [],  # Will be auto-set on first /start_thr
 }
 
-# CORS — only allow GitHub Pages
+# DANA Kaget — SERVER-SIDE ONLY (never sent to frontend until earned)
+DANA_LINKS = {
+    '5k': 'https://link.dana.id/danakaget?c=s6flgsagl&r=d6OJ2D&orderId=20260321101214777915010300166212768896667',
+    '10k': 'https://link.dana.id/danakaget?c=srmd58jc5&r=d6OJ2D&orderId=20260321101214735915010300166212768932147',
+}
+DANA_QR_FILES = {
+    '5k': 'data/QRcode_5k.jpeg',
+    '10k': 'data/QRcode_10k.jpeg',
+}
+
+# CORS — only allow GitHub Pages + local testing
 ALLOWED_ORIGINS = [
     'https://shotcan.github.io',
     'http://localhost:5500',
     'http://127.0.0.1:5500',
+    'http://localhost:8080',
+    'http://127.0.0.1:8080',
 ]
 CORS(app, origins=ALLOWED_ORIGINS)
 
@@ -279,11 +291,23 @@ def record_play():
     # Notify admin via Telegram
     notify_admin_play(play_record)
     
+    # Return DANA link + QR URL (only after valid play!)
+    tier = '10k' if won else '5k'
+    dana_link = DANA_LINKS.get(tier, '')
+    qr_url = f"/api/qr/{tier}"
+    
+    # Save dana info in play record for returning users
+    play_record['dana_link'] = dana_link
+    play_record['qr_url'] = qr_url
+    save_data(store)  # Re-save with dana info
+    
     return jsonify({
         'success': True,
         'won': won,
         'prize': prize,
         'claim_code': claim_code,
+        'dana_link': dana_link,
+        'qr_url': qr_url,
         'message': 'Selamat! THR kamu sudah dicatat.' if won else 'THR kamu sudah dicatat!',
     })
 
@@ -487,6 +511,19 @@ def telegram_polling():
         except Exception as e:
             print(f"[TG] Polling error: {e}")
             time.sleep(5)
+
+# ==================== QR CODE SERVING ====================
+from flask import send_file
+
+@app.route('/api/qr/<tier>', methods=['GET'])
+def serve_qr(tier):
+    """Serve QR code images — only 5k and 10k."""
+    if tier not in ('5k', '10k'):
+        return jsonify({'error': 'Invalid tier'}), 404
+    qr_path = DANA_QR_FILES.get(tier)
+    if not qr_path or not os.path.exists(qr_path):
+        return jsonify({'error': 'QR not found'}), 404
+    return send_file(qr_path, mimetype='image/jpeg')
 
 # ==================== HEALTH ====================
 @app.route('/api/health', methods=['GET'])
