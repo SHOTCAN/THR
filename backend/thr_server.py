@@ -32,7 +32,7 @@ THR_CONFIG = {
     'SECRET_KEY': os.environ.get('THR_SECRET', 'K3tup4t_L3b4r4n_1447H_S3rv3r!'),
     'ADMIN_KEY': os.environ.get('THR_ADMIN_KEY', 'admin_thr_2026'),
     'TELEGRAM_TOKEN': '8592265221:AAExujIGznvA-d4rFjnJKrQL2HdDuC8gLzw',
-    'TELEGRAM_ADMIN_IDS': [],  # Will be auto-set on first /start_thr
+    'TELEGRAM_ADMIN_IDS': [5803889152],  # Hardcoded admin
 }
 
 # DANA Kaget — SERVER-SIDE ONLY (never sent to frontend until earned)
@@ -399,12 +399,18 @@ def handle_telegram_update(update):
         if not text or not chat_id:
             return
         
-        # Auto-register first user as admin
-        if user_id and user_id not in THR_CONFIG['TELEGRAM_ADMIN_IDS']:
-            if text.startswith('/start_thr') or text.startswith('/stop_thr'):
-                THR_CONFIG['TELEGRAM_ADMIN_IDS'].append(user_id)
+        # Check admin (except /start which is public)
+        if text == '/start':
+            msg = (
+                "🕌 <b>THR Lebaran Bot</b>\n\n"
+                "Selamat datang! Bot ini untuk kontrol THR Lebaran.\n\n"
+                "/start_thr — Mulai THR\n"
+                "/status_thr — Lihat status\n"
+                "/help_thr — Bantuan"
+            )
+            tg_send(chat_id, msg)
+            return
         
-        # Check admin
         if user_id not in THR_CONFIG['TELEGRAM_ADMIN_IDS']:
             tg_send(chat_id, "⛔ Kamu bukan admin THR.")
             return
@@ -479,15 +485,7 @@ def handle_telegram_update(update):
             )
             tg_send(chat_id, msg)
         
-        elif text == '/start':
-            msg = (
-                "🕌 <b>THR Lebaran Bot</b>\n\n"
-                "Selamat datang! Bot ini untuk kontrol THR Lebaran.\n\n"
-                "/start_thr — Mulai THR\n"
-                "/status_thr — Lihat status\n"
-                "/help_thr — Bantuan"
-            )
-            tg_send(chat_id, msg)
+
     
     except Exception as e:
         print(f"[TG] Error handling update: {e}")
