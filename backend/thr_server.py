@@ -45,15 +45,8 @@ DANA_QR_FILES = {
     '10k': 'data/QRcode_10k.jpeg',
 }
 
-# CORS — only allow GitHub Pages + local testing
-ALLOWED_ORIGINS = [
-    'https://shotcan.github.io',
-    'http://localhost:5500',
-    'http://127.0.0.1:5500',
-    'http://localhost:8080',
-    'http://127.0.0.1:8080',
-]
-CORS(app, origins=ALLOWED_ORIGINS)
+# CORS — allow all for testing, lock down in production
+CORS(app, origins='*')
 
 # ==================== ACTIVATION STATE ====================
 THR_STATE = {
@@ -428,14 +421,14 @@ def handle_telegram_update(update):
         
         # Check admin (except /start which is public)
         if cmd == '/start':
-            msg = (
+            reply = (
                 "🕌 <b>THR Lebaran Bot</b>\n\n"
                 "Selamat datang! Bot ini untuk kontrol THR Lebaran.\n\n"
                 "/start_thr — Mulai THR\n"
                 "/status_thr — Lihat status\n"
                 "/help_thr — Bantuan"
             )
-            tg_send(chat_id, msg)
+            tg_send(chat_id, reply)
             return
         
         if user_id not in THR_CONFIG['TELEGRAM_ADMIN_IDS']:

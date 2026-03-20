@@ -24,8 +24,13 @@ const CONFIG = {
     SLOTS_PER_ROUND: [3, 3, 3, 3],
     INTERVAL_MINUTES: 15,
     WINDOW_MINUTES: 3,
-    // Backend API
-    API_URL: 'https://jokoisml.my.id/thr',
+    // Backend API — auto-detect environment
+    API_URL: (() => {
+        const host = window.location.hostname;
+        if (host === 'localhost' || host === '127.0.0.1') return 'http://localhost:5050';
+        // GitHub Pages or other remote → use LAN IP for testing (change to production URL when deployed)
+        return 'http://192.168.1.2:5050';
+    })(),
     // DANA data is SERVER-SIDE ONLY for security
 };
 
@@ -377,7 +382,7 @@ const Rebutan = (() => {
             const mins = Math.floor(remaining / 60);
             const secs = remaining % 60;
 
-            cdLabel.textContent = `🟢 RONDE ${Budget.getRoundNumber()} TERBUKA! Sisa waktu:`;
+            cdLabel.textContent = `🟢 RONDE ${Budget.getRoundNumber(thrStartTime)} TERBUKA! Sisa waktu:`;
             cdCard.classList.add('available');
             cdMinutes.textContent = String(mins).padStart(2, '0');
             cdSeconds.textContent = String(secs).padStart(2, '0');
@@ -395,7 +400,7 @@ const Rebutan = (() => {
             const mins = Math.floor(remaining / 60);
             const secs = remaining % 60;
 
-            cdLabel.textContent = `⏳ Ronde ${Budget.getRoundNumber() + 1} Dibuka Dalam:`;
+            cdLabel.textContent = `⏳ Ronde ${Budget.getRoundNumber(thrStartTime) + 1} Dibuka Dalam:`;
             cdCard.classList.remove('available');
             cdMinutes.textContent = String(mins).padStart(2, '0');
             cdSeconds.textContent = String(secs).padStart(2, '0');
@@ -521,7 +526,8 @@ function displayDanaLink(danaLink, qrUrl) {
         const linkBtn = document.getElementById('dana-link-btn');
         
         // QR image served from backend
-        qrImg.src = qrUrl || `${CONFIG.API_URL}/api/qr/${danaLink.includes('srmd58jc5') ? '10k' : '5k'}`;
+        const fullQrUrl = qrUrl ? (qrUrl.startsWith('http') ? qrUrl : `${CONFIG.API_URL}${qrUrl}`) : `${CONFIG.API_URL}/api/qr/5k`;
+        qrImg.src = fullQrUrl;
         linkBtn.href = danaLink;
         linkBtn.textContent = '💰 Buka DANA Kaget';
     } else {
